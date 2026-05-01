@@ -23,11 +23,16 @@ API = "https://api.linear.app/graphql"
 # ─────────────────────────────────────────────────────────────────────────────
 # The demo issues. Each one is a buildable, testable slice of the dashboard.
 # Audience watches them go from Todo → ... → Done and the dashboard appear.
+#
+# `blocked_by` lists titles of upstream issues. Symphony's
+# `todo_blockers_resolved()` keeps a Todo issue ineligible for dispatch while
+# any blocker is still in a non-terminal state — so the demo unfolds in order.
 # ─────────────────────────────────────────────────────────────────────────────
 
 ISSUES = [
     {
         "title": "Stand up a basic FastAPI dashboard server",
+        "blocked_by": [],
         "body": textwrap.dedent("""\
             We need a web dashboard the agent can share with its human owner.
             Start with the smallest viable thing: a FastAPI server that lists all
@@ -59,6 +64,7 @@ ISSUES = [
     },
     {
         "title": "Show quotes per request on the dashboard",
+        "blocked_by": ["Stand up a basic FastAPI dashboard server"],
         "body": textwrap.dedent("""\
             Each request row on `/` should expand to show the quotes received for
             it: pro name, rating, price, ETA, message, status.
@@ -85,6 +91,7 @@ ISSUES = [
     },
     {
         "title": "Add accept-quote action from the dashboard",
+        "blocked_by": ["Show quotes per request on the dashboard"],
         "body": textwrap.dedent("""\
             Right now you can only accept a quote via the CLI. Add a button on
             each pending quote that books the pro.
@@ -115,6 +122,7 @@ ISSUES = [
     },
     {
         "title": "Auto-refresh the dashboard so quotes appear live",
+        "blocked_by": ["Stand up a basic FastAPI dashboard server"],
         "body": textwrap.dedent("""\
             The dashboard should update without manual refresh so the human owner
             actually sees activity in real time.
@@ -138,6 +146,7 @@ ISSUES = [
     },
     {
         "title": "Add a status filter and per-request detail page",
+        "blocked_by": ["Stand up a basic FastAPI dashboard server"],
         "body": textwrap.dedent("""\
             Make the dashboard navigable: filter by status and drill into a single
             request.
@@ -162,6 +171,12 @@ ISSUES = [
     },
     {
         "title": "Add tests for the dashboard endpoints",
+        "blocked_by": [
+            "Stand up a basic FastAPI dashboard server",
+            "Show quotes per request on the dashboard",
+            "Add accept-quote action from the dashboard",
+            "Add a status filter and per-request detail page",
+        ],
         "body": textwrap.dedent("""\
             We have CLI tests but nothing for the new server. Lock in the dashboard
             behavior so future tickets don't regress it.
@@ -186,6 +201,13 @@ ISSUES = [
     },
     {
         "title": "Document the dashboard in the README",
+        "blocked_by": [
+            "Stand up a basic FastAPI dashboard server",
+            "Show quotes per request on the dashboard",
+            "Add accept-quote action from the dashboard",
+            "Auto-refresh the dashboard so quotes appear live",
+            "Add a status filter and per-request detail page",
+        ],
         "body": textwrap.dedent("""\
             With the dashboard shipped, the README's "what's NOT here yet" line
             is wrong. Replace it with a real Dashboard section.
@@ -204,6 +226,147 @@ ISSUES = [
 
             Read the rendered README on GitHub. Fresh eyes should be able to
             spin up the dashboard from the README alone.
+        """),
+    },
+
+    # ── Stage 2: Backlog. Surface these to Todo after stage 1 is Done. ──────
+    {
+        "title": "Add a pro-facing dashboard page",
+        "state": "Backlog",
+        "blocked_by": ["Stand up a basic FastAPI dashboard server"],
+        "body": textwrap.dedent("""\
+            The dashboard today is the customer's view. Add a page from the
+            pro's perspective: what jobs they could quote on right now.
+
+            ## Acceptance criteria
+
+            - New route `GET /pro/<id>` that lists open requests in the same
+              category as that pro, in their zip area, that they haven't already
+              quoted on.
+            - Each row has an inline form to submit a quote (price + ETA + message)
+              that POSTs to `/pro/<id>/quote/<request_id>`.
+            - Reuses the same base template as the customer dashboard.
+
+            ## Validation
+
+            ```sh
+            promatch reset --yes && promatch seed
+            promatch request "Mount a TV" -c handyman -z 94110 -b 200
+            # In a browser, /pro/6 (Bay Area Fix-It) should list that request.
+            # Submit a quote from the form. Verify it shows on / for the customer.
+            ```
+        """),
+    },
+    {
+        "title": "Replace dashboard polling with Server-Sent Events",
+        "state": "Backlog",
+        "blocked_by": [
+            "Auto-refresh the dashboard so quotes appear live",
+        ],
+        "body": textwrap.dedent("""\
+            Polling every 2s is wasteful and laggy. Switch to SSE so updates
+            arrive the instant they happen.
+
+            ## Acceptance criteria
+
+            - New endpoint `GET /api/events` (text/event-stream) that emits a
+              JSON event whenever a request or quote changes (created, status
+              change). Use a simple in-process broadcaster — no Redis.
+            - The dashboard subscribes via `EventSource` and re-renders on each
+              event instead of polling `/api/state`.
+            - Keep `/api/state` working for first paint and as a fallback.
+            - The "live" indicator now reflects the open SSE connection.
+
+            ## Validation
+
+            Open browser devtools → Network → confirm one long-running
+            `text/event-stream` connection instead of recurring `/api/state` calls.
+            Run `promatch request …` in another terminal — the dashboard updates
+            within 200ms.
+        """),
+    },
+    {
+        "title": "Auto-generate OpenAPI docs at /api/docs",
+        "state": "Backlog",
+        "blocked_by": ["Stand up a basic FastAPI dashboard server"],
+        "body": textwrap.dedent("""\
+            Agents that consume the promatch API need a contract. FastAPI gives
+            us OpenAPI for free — wire it up properly.
+
+            ## Acceptance criteria
+
+            - Every JSON route (`/api/state`, `/api/events`, `/quotes/<id>/accept`,
+              and any new ones) has a `response_model` and a docstring.
+            - Mount Swagger UI at `/api/docs` and ReDoc at `/api/redoc`.
+            - Add a small "API" link in the dashboard header to `/api/docs`.
+
+            ## Validation
+
+            ```sh
+            curl -s http://localhost:5050/openapi.json | jq '.info.title'
+            # opens in browser:
+            open http://localhost:5050/api/docs
+            ```
+        """),
+    },
+    {
+        "title": "Bug: cancelled requests still appear on the default dashboard",
+        "state": "Backlog",
+        "blocked_by": ["Add a status filter and per-request detail page"],
+        "body": textwrap.dedent("""\
+            The default `/` view shows *every* request, including cancelled
+            ones. That's noise. The customer-facing dashboard should hide
+            cancelled by default but keep them reachable via `?status=cancelled`.
+
+            ## Acceptance criteria
+
+            - On `/`, the default request list excludes `status=cancelled`.
+            - `/?status=cancelled` still works and shows only cancelled.
+            - `/?status=all` (new) shows everything.
+            - Filter UI updated to reflect the new default.
+
+            ## Validation
+
+            ```sh
+            promatch request "x" -c handyman -z 94110 -b 100
+            promatch cancel 1
+            curl -s http://localhost:5050/ | grep -c 'request-row'   # 0
+            curl -s http://localhost:5050/?status=cancelled | grep -c 'request-row'  # 1
+            ```
+        """),
+    },
+    {
+        "title": "Add `promatch agent-book` for autonomous booking",
+        "state": "Backlog",
+        "blocked_by": [],
+        "body": textwrap.dedent("""\
+            Demonstrate agentic-first: a single command an AI agent could run to
+            go from natural-language description to booked pro, end-to-end.
+
+            ## Acceptance criteria
+
+            - New CLI command:
+              `promatch agent-book "Assemble Pax wardrobe" --zip 94103 --budget 200`
+            - It infers the category from a small keyword map in the source
+              (no external API). E.g. "assemble" → `furniture-assembly`,
+              "leak"/"faucet" → `plumbing`. Document the map in the function
+              docstring.
+            - It posts the request, waits for quotes (already synchronous in
+              the simulator), picks the best quote (lowest price among
+              pros with rating ≥ 4.6, falling back to lowest price overall),
+              accepts it, and prints the booked pro + price.
+            - Exit non-zero with a clear message if no quotes arrive or no
+              category can be inferred.
+            - `--json` flag prints the structured result instead of prose.
+
+            ## Validation
+
+            ```sh
+            promatch agent-book "Assemble Pax wardrobe" --zip 94103 --budget 200
+            # → "Booked IKEA Assembly Pros at $72.50 (4.9★, ETA 6h)"
+            promatch agent-book "definitely-not-a-real-job" --zip 94103 --budget 50
+            # → exits 1 with "could not infer category from description"
+            ```
         """),
     },
 ]
@@ -303,19 +466,67 @@ def find_state(api_key: str, team_id: str, name: str) -> dict | None:
     return None
 
 
-def list_existing_titles(api_key: str, project_id: str) -> set[str]:
+def list_existing_issues(api_key: str, project_id: str) -> dict[str, dict]:
+    """title -> {id, identifier} for all issues currently in the project."""
     data = gql(
         api_key,
         """
         query($p: ID!) {
           issues(filter: { project: { id: { eq: $p } } }, first: 100) {
-            nodes { id title }
+            nodes { id identifier title }
           }
         }
         """,
         {"p": project_id},
     )
-    return {n["title"] for n in data["issues"]["nodes"]}
+    return {n["title"]: {"id": n["id"], "identifier": n["identifier"]}
+            for n in data["issues"]["nodes"]}
+
+
+def list_existing_relations(api_key: str, project_id: str) -> set[tuple[str, str]]:
+    """Return set of (blocker_id, blocked_id) for every existing 'blocks'
+    relation among this project's issues. Used to make relation seeding idempotent."""
+    data = gql(
+        api_key,
+        """
+        query($p: ID!) {
+          issues(filter: { project: { id: { eq: $p } } }, first: 100) {
+            nodes {
+              id
+              relations { nodes { type relatedIssue { id } } }
+            }
+          }
+        }
+        """,
+        {"p": project_id},
+    )
+    pairs: set[tuple[str, str]] = set()
+    for issue in data["issues"]["nodes"]:
+        blocker_id = issue["id"]
+        for rel in (issue.get("relations") or {}).get("nodes") or []:
+            if (rel.get("type") or "").lower() != "blocks":
+                continue
+            related = rel.get("relatedIssue") or {}
+            blocked_id = related.get("id")
+            if blocked_id:
+                pairs.add((blocker_id, blocked_id))
+    return pairs
+
+
+def create_relation(api_key: str, blocker_id: str, blocked_id: str) -> None:
+    """Create a 'blocks' relation: blocker_id blocks blocked_id."""
+    gql(
+        api_key,
+        """
+        mutation($input: IssueRelationCreateInput!) {
+          issueRelationCreate(input: $input) {
+            success
+            issueRelation { id type }
+          }
+        }
+        """,
+        {"input": {"type": "blocks", "issueId": blocker_id, "relatedIssueId": blocked_id}},
+    )
 
 
 def create_issue(api_key: str, team_id: str, project_id: str, state_id: str | None,
@@ -366,33 +577,64 @@ def main() -> None:
     project = find_project(api_key, project_slug)
     print(f"  → {project['name']} ({project['id']})")
 
-    print("Looking up the 'Todo' workflow state...")
-    todo = find_state(api_key, team["id"], "Todo")
-    if todo is None:
-        print("  ⚠ no 'Todo' state on this team — issues will land in the team default")
-    else:
-        print(f"  → {todo['id']}")
+    print("Looking up workflow states (Todo, Backlog)...")
+    states_by_name: dict[str, dict] = {}
+    for name in ("Todo", "Backlog"):
+        s = find_state(api_key, team["id"], name)
+        if s is not None:
+            states_by_name[name] = s
+            print(f"  → {name}: {s['id']}")
+        else:
+            print(f"  ⚠ no {name!r} state on this team — issues for it will land in the team default")
 
-    existing = list_existing_titles(api_key, project["id"])
-    print(f"\nFound {len(existing)} existing issue(s) in project. Will skip duplicates.\n")
+    issues_by_title = list_existing_issues(api_key, project["id"])
+    print(f"\nFound {len(issues_by_title)} existing issue(s) in project. Will skip duplicates.\n")
 
     created, skipped = 0, 0
     for spec in ISSUES:
-        if spec["title"] in existing:
+        if spec["title"] in issues_by_title:
             print(f"  ⏭  skip (exists): {spec['title']}")
             skipped += 1
             continue
+        target_state_name = spec.get("state", "Todo")
+        target_state = states_by_name.get(target_state_name)
         issue = create_issue(
             api_key, team["id"], project["id"],
-            todo["id"] if todo else None,
+            target_state["id"] if target_state else None,
             spec["title"], spec["body"],
         )
-        print(f"  ✓ created {issue['identifier']}: {issue['title']}")
+        print(f"  ✓ created {issue['identifier']} [{target_state_name}]: {issue['title']}")
         print(f"     {issue['url']}")
+        issues_by_title[spec["title"]] = {"id": issue["id"], "identifier": issue["identifier"]}
         created += 1
 
-    print(f"\nDone. {created} created, {skipped} already existed.")
-    print("Issues are sitting in 'Todo' — Symphony will pick them up on its next tick.")
+    # ── Wire up blocked_by relations (idempotent) ────────────────────────────
+    print("\nLinking blocked_by relations...")
+    existing_relations = list_existing_relations(api_key, project["id"])
+    rel_created, rel_skipped = 0, 0
+    for spec in ISSUES:
+        blocked_title = spec["title"]
+        for blocker_title in spec.get("blocked_by") or []:
+            blocker = issues_by_title.get(blocker_title)
+            blocked = issues_by_title.get(blocked_title)
+            if not blocker or not blocked:
+                print(f"  ⚠ missing issue for relation {blocker_title!r} -> {blocked_title!r}, skipping")
+                continue
+            pair = (blocker["id"], blocked["id"])
+            if pair in existing_relations:
+                rel_skipped += 1
+                continue
+            create_relation(api_key, blocker["id"], blocked["id"])
+            print(f"  ✓ {blocker['identifier']} blocks {blocked['identifier']}")
+            existing_relations.add(pair)
+            rel_created += 1
+
+    print(f"\nDone. Issues: {created} created, {skipped} already existed.")
+    print(f"Relations: {rel_created} created, {rel_skipped} already existed.")
+    print()
+    print("Stage 1 (Todo): Symphony picks up unblocked issues on its next tick.")
+    print("Stage 2 (Backlog): drag these to Todo when stage 1 is Done — they're")
+    print("the second act of the demo (pro view, SSE, OpenAPI, agent-book, etc).")
 
 
 if __name__ == "__main__":
