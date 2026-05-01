@@ -82,14 +82,27 @@ if ! command -v symphony >/dev/null 2>&1; then
 fi
 echo "  ✓ symphony installed at $(command -v symphony)"
 
-echo "==> Installing promatch (so you can run \`promatch serve\` etc.)..."
-python -m pip install --quiet -e ./promatch 2>&1 | tail -3
-echo "  ✓ promatch installed at $(command -v promatch)"
-
-# ── Step 2: promatch git repo ────────────────────────────────────────────────
+# ── Step 2: materialize the promatch runtime repo from the template ─────────
 echo
 echo "==> Setting up promatch git repo at $TARGET_REPO..."
-mkdir -p "$TARGET_REPO"
+template_dir="$(pwd)/promatch.template"
+if [ ! -d "$template_dir" ]; then
+  echo "  ✗ promatch.template/ missing at $template_dir." >&2
+  echo "    This demo expects the template directory to be committed in" >&2
+  echo "    symphony-thumbtack. Reclone the upstream repo." >&2
+  exit 1
+fi
+
+if [ ! -d "$TARGET_REPO" ]; then
+  echo "  copying promatch.template/ → $TARGET_REPO"
+  cp -R "$template_dir" "$TARGET_REPO"
+elif [ ! "$(ls -A "$TARGET_REPO" 2>/dev/null)" ]; then
+  echo "  $TARGET_REPO is empty — populating from promatch.template/"
+  cp -R "$template_dir/." "$TARGET_REPO/"
+else
+  echo "  ✓ $TARGET_REPO already populated (leaving as-is)"
+fi
+
 cd "$TARGET_REPO"
 if [ ! -d .git ]; then
   git init -q -b main
@@ -100,6 +113,14 @@ if [ ! -d .git ]; then
 else
   echo "  ✓ git repo already exists"
 fi
+cd - >/dev/null
+
+# Now that the runtime promatch source exists, pip-install it editable so
+# `promatch serve` etc. resolve via the venv.
+echo "==> Installing promatch (so you can run \`promatch …\` from this shell)..."
+python -m pip install --quiet -e "$TARGET_REPO" 2>&1 | tail -3
+echo "  ✓ promatch installed at $(command -v promatch)"
+cd "$TARGET_REPO"
 
 # ── Step 3: GitHub remote ────────────────────────────────────────────────────
 if git remote get-url origin >/dev/null 2>&1; then

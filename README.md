@@ -43,7 +43,11 @@ symphony-thumbtack/
 ├── pyproject.toml         # Top-level: makes Symphony pip-installable from
 │                          # this folder (bootstrap.sh runs `pip install -e .`).
 ├── symphony/              # Symphony orchestrator source.
-├── promatch/              # The target repo Symphony's agents work in.
+├── promatch.template/     # ★ COMMITTED source for the demo target repo.
+│                          # bootstrap.sh copies it to ./promatch and `git init`s.
+├── promatch/              # Runtime copy created by bootstrap. GIT-IGNORED in
+│                          # this outer repo so there's no nested-git foot-gun.
+│                          # This is where agents actually push work.
 │   ├── promatch/          #   CLI source (Click + Rich).
 │   ├── tests/             #   Pytest tests.
 │   └── README.md

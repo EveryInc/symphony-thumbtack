@@ -5,6 +5,12 @@ config.env
 # Per-issue worktrees created by Symphony
 _workspaces/
 
+# Runtime copy of the promatch repo. The committed source lives in
+# promatch.template/ — bootstrap.sh copies it here and `git init`s the copy.
+# This keeps the outer repo nesting-free and ships a clean template to
+# every recipient on `git clone`.
+/promatch/
+
 # Logs
 symphony.log
 *.log
