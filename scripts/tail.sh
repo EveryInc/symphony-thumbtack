@@ -24,8 +24,8 @@ fi
 
 if [ "$filter" = "1" ]; then
   tail -f "$log_file" \
-    | awk '!/msg=tick.*dispatched=0/' \
-    | grep --color=always -E \
+    | awk '!/msg=tick.*dispatched=0/ { print; fflush() }' \
+    | grep --line-buffered --color=always -E \
       'msg=dispatched|hook=after_create|hook=before_run|hook=after_run|exited|reloaded|level=warning|level=error|$'
 else
   tail -f "$log_file"

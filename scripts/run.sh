@@ -5,9 +5,13 @@
 #   - LINEAR_API_KEY / LINEAR_PROJECT_SLUG are resolvable in WORKFLOW.md
 #   - TARGET_REPO / SYMPHONY_DIR are inherited by hook subprocesses
 #
+# Output behavior:
+#   - Logs stream to your terminal in real time (line-buffered through awk/grep).
+#   - The same stream is also tee'd to symphony.log for replay.
+#
 # Usage:
-#   scripts/run.sh                # default: filtered + tee to symphony.log
-#   scripts/run.sh --raw          # no filter, no color
+#   scripts/run.sh                # default: filtered + colored + tee'd
+#   scripts/run.sh --raw          # no filter, no color, just tee
 #   scripts/run.sh --debug        # SYMPHONY_LOG_LEVEL=debug
 
 set -euo pipefail
@@ -20,6 +24,12 @@ fi
 # shellcheck disable=SC1091
 source config.env
 
+# Activate the bootstrap-created venv so `symphony` resolves to .venv/bin/symphony.
+if [ -d .venv ]; then
+  # shellcheck disable=SC1091
+  source .venv/bin/activate
+fi
+
 filter=1
 debug=0
 for arg in "$@"; do
@@ -27,7 +37,7 @@ for arg in "$@"; do
     --raw)   filter=0 ;;
     --debug) debug=1 ;;
     -h|--help)
-      head -16 "$0" | tail -10
+      head -18 "$0" | tail -14
       exit 0
       ;;
   esac
@@ -37,22 +47,29 @@ if [ "$debug" = "1" ]; then
   export SYMPHONY_LOG_LEVEL=debug
 fi
 
+# Force Python to flush stderr per line so structured logs appear in real time
+# rather than block-buffered chunks.
+export PYTHONUNBUFFERED=1
+
 if ! command -v symphony >/dev/null 2>&1; then
-  echo "symphony binary not on PATH. From the symphony source repo:" >&2
-  echo "  pip install -e ." >&2
+  echo "symphony binary not on PATH. Run scripts/bootstrap.sh first." >&2
   exit 1
 fi
 
 log_file="symphony.log"
-echo "==> Logs are also being written to $log_file (full unfiltered copy)."
+echo "==> Logs stream live to this terminal AND tail to $log_file."
 echo "==> Press Ctrl-C to shut down."
 echo
 
 if [ "$filter" = "1" ]; then
+  # `awk … fflush()` and `grep --line-buffered` keep each line moving through
+  # the pipeline immediately instead of getting trapped in 4 KB pipe buffers.
+  # The trailing `|$` in grep matches every line, so nothing is dropped — only
+  # the listed patterns get colored.
   symphony 2>&1 \
     | tee -a "$log_file" \
-    | awk '!/msg=tick.*dispatched=0/' \
-    | grep --color=always -E \
+    | awk '!/msg=tick.*dispatched=0/ { print; fflush() }' \
+    | grep --line-buffered --color=always -E \
       'msg=dispatched|hook=after_create|hook=before_run|hook=after_run|exited|reloaded|level=warning|level=error|$'
 else
   symphony 2>&1 | tee -a "$log_file"
