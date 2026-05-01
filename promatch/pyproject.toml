@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "promatch"
+version = "0.1.0"
+description = "Local-only Thumbtack-style pro lead matching: CLI today, live dashboard tomorrow."
+requires-python = ">=3.9"
+dependencies = [
+    "click>=8.1",
+    "rich>=13.7",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4",
+]
+
+[project.scripts]
+promatch = "promatch.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["promatch*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -1,0 +1,20 @@
+# Local config — secrets, paths
+config.env
+.env
+
+# Per-issue worktrees created by Symphony
+_workspaces/
+
+# Logs
+symphony.log
+*.log
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+*.egg-info/
+
+# OS
+.DS_Store
