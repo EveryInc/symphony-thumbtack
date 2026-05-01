@@ -23,10 +23,12 @@ if [ ! -f "$log_file" ]; then
 fi
 
 if [ "$filter" = "1" ]; then
+  # Drop only fully-idle ticks (dispatched=0 AND running=0). Active ticks are
+  # heartbeats — keep them visible.
   tail -f "$log_file" \
-    | awk '!/msg=tick.*dispatched=0/ { print; fflush() }' \
+    | awk '!(/msg=tick/ && /dispatched=0/ && /running=0/) { print; fflush() }' \
     | grep --line-buffered --color=always -E \
-      'msg=dispatched|hook=after_create|hook=before_run|hook=after_run|exited|reloaded|level=warning|level=error|$'
+      'msg=dispatched|msg=tick|hook=after_create|hook=before_run|hook=after_run|exited|reloaded|level=warning|level=error|$'
 else
   tail -f "$log_file"
 fi

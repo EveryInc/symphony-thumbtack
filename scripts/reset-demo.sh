@@ -91,8 +91,14 @@ if [ "$reset_db" = "1" ]; then
   echo "==> Resetting promatch SQLite DB..."
   rm -f "${PROMATCH_DB:-$HOME/.promatch/promatch.db}"
   if command -v promatch >/dev/null 2>&1; then
-    promatch seed >/dev/null
-    echo "    db reseeded"
+    if promatch seed >/dev/null 2>&1; then
+      echo "    db dropped + reseeded"
+    else
+      echo "    db dropped (reseed skipped — \`promatch\` errored;"
+      echo "     fix with: source .venv/bin/activate && pip install -e ./promatch)"
+    fi
+  else
+    echo "    db dropped (no \`promatch\` on PATH to reseed)"
   fi
 fi
 

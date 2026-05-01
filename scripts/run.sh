@@ -58,19 +58,27 @@ fi
 
 log_file="symphony.log"
 echo "==> Logs stream live to this terminal AND tail to $log_file."
+echo "==> Tip: in a second pane, run \`scripts/watch-agents.sh\` to see what"
+echo "    each Claude agent is doing right now (live tool-call activity)."
 echo "==> Press Ctrl-C to shut down."
 echo
 
 if [ "$filter" = "1" ]; then
-  # `awk … fflush()` and `grep --line-buffered` keep each line moving through
-  # the pipeline immediately instead of getting trapped in 4 KB pipe buffers.
-  # The trailing `|$` in grep matches every line, so nothing is dropped — only
-  # the listed patterns get colored.
+  # Buffering: `awk … fflush()` + `grep --line-buffered` keep each line moving
+  # through the pipeline immediately rather than getting trapped in 4 KB
+  # pipe buffers.
+  #
+  # Filter: drop *only* fully-idle ticks (dispatched=0 AND running=0). When an
+  # agent is running, we still want to see ticks every poll interval — they
+  # are the heartbeat that proves the orchestrator is alive.
+  #
+  # The trailing `|$` in grep matches every line, so nothing is dropped after
+  # the awk filter — only the listed patterns get colored.
   symphony 2>&1 \
     | tee -a "$log_file" \
-    | awk '!/msg=tick.*dispatched=0/ { print; fflush() }' \
+    | awk '!(/msg=tick/ && /dispatched=0/ && /running=0/) { print; fflush() }' \
     | grep --line-buffered --color=always -E \
-      'msg=dispatched|hook=after_create|hook=before_run|hook=after_run|exited|reloaded|level=warning|level=error|$'
+      'msg=dispatched|msg=tick|hook=after_create|hook=before_run|hook=after_run|exited|reloaded|level=warning|level=error|$'
 else
   symphony 2>&1 | tee -a "$log_file"
 fi

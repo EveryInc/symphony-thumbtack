@@ -27,7 +27,7 @@ tracker:
     - Duplicate
 
 polling:
-  interval_ms: 30000
+  interval_ms: 10000
 
 workspace:
   root: ./_workspaces

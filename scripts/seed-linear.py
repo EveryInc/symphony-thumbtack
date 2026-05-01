@@ -63,6 +63,40 @@ ISSUES = [
         """),
     },
     {
+        "title": "Refactor booking logic into promatch/services.py",
+        "blocked_by": [],
+        "body": textwrap.dedent("""\
+            The CLI's `cmd_accept` does the booking transaction inline (mark
+            quote accepted, decline siblings, mark request booked). The web
+            dashboard will need the same logic, and we don't want two copies.
+
+            Pull this out into a service module *now*, before the dashboard
+            tickets land, so the accept-quote endpoint can share it cleanly.
+
+            ## Acceptance criteria
+
+            - New module `promatch/services.py` exposing a `book_quote(quote_id)`
+              function that performs the full transaction (accept the quote,
+              decline siblings, mark request booked) and returns the updated
+              request payload.
+            - `cli.cmd_accept` calls `services.book_quote(...)` instead of
+              issuing SQL itself. CLI behavior is identical.
+            - Add a `BookingError` exception type for "quote not found" /
+              "already booked" cases. CLI translates it to a `ClickException`.
+            - Add a unit test `tests/test_services.py` covering: success,
+              already-booked rejection, unknown-quote rejection.
+
+            ## Validation
+
+            ```sh
+            pytest -q                           # all tests pass, including new ones
+            promatch reset --yes && promatch seed
+            promatch request "x" -c handyman -z 94110 -b 100
+            promatch accept 1                    # still works, status -> booked
+            ```
+        """),
+    },
+    {
         "title": "Show quotes per request on the dashboard",
         "blocked_by": ["Stand up a basic FastAPI dashboard server"],
         "body": textwrap.dedent("""\
@@ -91,7 +125,10 @@ ISSUES = [
     },
     {
         "title": "Add accept-quote action from the dashboard",
-        "blocked_by": ["Show quotes per request on the dashboard"],
+        "blocked_by": [
+            "Show quotes per request on the dashboard",
+            "Refactor booking logic into promatch/services.py",
+        ],
         "body": textwrap.dedent("""\
             Right now you can only accept a quote via the CLI. Add a button on
             each pending quote that books the pro.
@@ -102,10 +139,9 @@ ISSUES = [
             - Button submits a `POST /quotes/<id>/accept` form (HTML form, no JS
               required for the demo).
             - On success, redirect back to `/` (303 See Other).
-            - The endpoint must reuse the existing `cli.cmd_accept` logic — do
-              NOT duplicate the booking transaction. Refactor the booking logic
-              out of `cli.py` into a new `promatch/services.py` module that
-              both the CLI command and the route call into.
+            - The endpoint MUST call `services.book_quote(...)` (the function
+              extracted in the refactor ticket). Do NOT duplicate the booking
+              transaction inline in the route handler.
             - After accepting, that request shows status "booked" and only the
               accepted quote remains visible in the default view.
 
