@@ -24,34 +24,52 @@ gh auth login              # GitHub.com → HTTPS → login with browser
 gh auth status             # confirm ✓
 ```
 
-Install Symphony (from its source repo, one time):
-
-```sh
-cd /path/to/symphony
-pip install -e .
-which symphony             # confirm it's on PATH
-```
+You normally use Gerrit for git versioning but in this case the demo works best with github.
 
 ---
 
-## 1. Get a Linear API key
+## 1. Create your config file
+
+Do this first so you have somewhere to paste each value as you collect it.
+
+```sh
+cp config.env.example config.env
+```
+
+You'll fill in four values across steps 2 and 3. Leave them as `REPLACE_ME`
+for now and overwrite as you go.
+
+---
+
+## 2. Get a Linear API key
 
 1. Open Linear → click your avatar (top left) → **Settings**.
 2. Go to **Account → Security & access → API**.
 3. Click **Create new API key**, name it "symphony-demo", copy the value
    (starts with `lin_api_…`).
-4. Save it somewhere — you'll paste it into `config.env` in step 4.
+4. **Paste it into `config.env`:**
+
+   ```sh
+   LINEAR_API_KEY=lin_api_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+   ```
 
 > The key inherits **your** permissions. Symphony will read/write the project
 > as you. That's fine for a demo.
 
 ---
 
-## 2. Create the demo Linear project
+## 3. Create the demo Linear project
 
 1. In your Linear workspace, pick the team you want to demo against (or
    create a fresh one called e.g. "ENG" or "DEMO"). Note the team's **key**
    (the 2-4 letter prefix on issue IDs, e.g. `ENG-1`).
+
+   **Paste it into `config.env`:**
+
+   ```sh
+   LINEAR_TEAM_KEY=ENG
+   ```
+
 2. **Projects** → **+ New project**.
 3. Name it something obvious — `Promatch Demo` works.
 4. Description (optional but useful): "Symphony orchestrates Claude agents
@@ -64,16 +82,25 @@ which symphony             # confirm it's on PATH
                                        this whole tail is the slugId
    ```
 
-   Copy that trailing slug — you'll paste it into `config.env`.
+   **Paste it into `config.env`:**
+
+   ```sh
+   LINEAR_PROJECT_SLUG=promatch-demo-1a2b3c4d5e6f
+   ```
+
+6. Leave `TARGET_REPO` as the default unless you've moved the `promatch/`
+   subdir somewhere else.
+
+Save `config.env`.
 
 ---
 
-## 3. Add the custom workflow states
+## 4. Add the custom Linear workflow states
 
 Symphony's WORKFLOW.md expects a few states beyond Linear's defaults. Add
 the missing ones once per team.
 
-In Linear: **Team Settings → Workflow** for the team that owns your project.
+In Linear: **Team Settings → Workflow -> Issue Statuses** for the team that owns your project.
 
 | State | Type | Purpose |
 |---|---|---|
@@ -87,28 +114,6 @@ In Linear: **Team Settings → Workflow** for the team that owns your project.
 
 Click "+ Add state" under the **Started** group for each missing one. Match
 the names exactly — `WORKFLOW.md` matches by name string.
-
----
-
-## 4. Configure this demo
-
-```sh
-cd /Users/michaeltaylor/Every-clients/thumbtack/symphony-thumbtack
-cp config.env.example config.env
-$EDITOR config.env
-```
-
-Fill in the four values:
-
-```sh
-LINEAR_API_KEY=lin_api_...               # from step 1
-LINEAR_PROJECT_SLUG=promatch-demo-1a2b3c # from step 2 (URL tail)
-LINEAR_TEAM_KEY=ENG                      # from step 2 (team key)
-TARGET_REPO=...                          # leave default unless you moved promatch
-```
-
-Save. **Don't commit `config.env`** — it has your secret. It's already in
-`.gitignore`.
 
 ---
 
@@ -145,6 +150,7 @@ claude mcp list | grep linear
 
 Run the all-in-one bootstrap. It:
 
+- Installs the bundled Symphony (`pip install -e .`) if not already
 - Validates `config.env`
 - Inits `promatch/` as a git repo on `main` if needed
 - Offers to create a GitHub remote via `gh repo create`

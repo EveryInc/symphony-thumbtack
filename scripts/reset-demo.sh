@@ -29,6 +29,12 @@ source config.env
 : "${TARGET_REPO:?TARGET_REPO not set in config.env}"
 : "${SYMPHONY_DIR:?SYMPHONY_DIR not set in config.env}"
 
+# Activate the bootstrap-created venv so `promatch` is on PATH for --db reseed.
+if [ -d "$SYMPHONY_DIR/.venv" ]; then
+  # shellcheck disable=SC1091
+  source "$SYMPHONY_DIR/.venv/bin/activate"
+fi
+
 reset_db=0
 reset_sessions=0
 for arg in "$@"; do

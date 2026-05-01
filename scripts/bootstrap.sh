@@ -57,10 +57,34 @@ for var in LINEAR_API_KEY LINEAR_PROJECT_SLUG LINEAR_TEAM_KEY TARGET_REPO; do
 done
 [ "$err" = "1" ] && exit 1
 
-if ! command -v symphony >/dev/null 2>&1; then
-  echo "  ⚠ symphony binary not on PATH — install with 'pip install -e .'"
-  echo "    from the symphony source repo before running scripts/run.sh."
+# ── Set up a local venv so the system Python stays untouched ────────────────
+echo "==> Setting up local virtualenv at .venv/..."
+if [ ! -d .venv ]; then
+  python3 -m venv .venv
+  echo "  ✓ created .venv"
+else
+  echo "  ✓ .venv already exists"
 fi
+# shellcheck disable=SC1091
+source .venv/bin/activate
+echo "  ✓ activated ($(python -V 2>&1))"
+
+# Modern editable installs (PEP-660) need pip ≥ 21.3. macOS system pip is
+# stuck at 21.2.4 — upgrade inside the venv unconditionally.
+echo "==> Upgrading pip inside the venv..."
+python -m pip install --quiet --upgrade pip 2>&1 | tail -2
+
+echo "==> Installing the bundled Symphony orchestrator..."
+python -m pip install --quiet -e . 2>&1 | tail -3
+if ! command -v symphony >/dev/null 2>&1; then
+  echo "  ✗ symphony still not on PATH after install." >&2
+  exit 1
+fi
+echo "  ✓ symphony installed at $(command -v symphony)"
+
+echo "==> Installing promatch (so you can run \`promatch serve\` etc.)..."
+python -m pip install --quiet -e ./promatch 2>&1 | tail -3
+echo "  ✓ promatch installed at $(command -v promatch)"
 
 # ── Step 2: promatch git repo ────────────────────────────────────────────────
 echo

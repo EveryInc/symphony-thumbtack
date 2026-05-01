@@ -40,6 +40,9 @@ symphony-thumbtack/
 │   ├── reset-demo.sh      # Wipe local state between demo runs.
 │   ├── tail.sh            # Live tail symphony.log in a second pane.
 │   └── seed-linear.py     # Push the demo's 7 issues into Linear (idempotent).
+├── pyproject.toml         # Top-level: makes Symphony pip-installable from
+│                          # this folder (bootstrap.sh runs `pip install -e .`).
+├── symphony/              # Symphony orchestrator source.
 ├── promatch/              # The target repo Symphony's agents work in.
 │   ├── promatch/          #   CLI source (Click + Rich).
 │   ├── tests/             #   Pytest tests.
@@ -55,14 +58,12 @@ symphony-thumbtack/
 cp config.env.example config.env
 $EDITOR config.env                    # fill in 4 values
 
-# 2. Install Symphony (from its source repo, one time)
-pip install -e /path/to/symphony
+# 2. One-shot bootstrap (also installs the bundled Symphony orchestrator)
+scripts/bootstrap.sh                  # installs symphony, validates config,
+                                      # inits promatch git, offers to create
+                                      # GitHub remote + seed Linear
 
-# 3. One-shot bootstrap
-scripts/bootstrap.sh                  # validates config, inits promatch git,
-                                       # offers to create GitHub remote + seed Linear
-
-# 4. Run
+# 3. Run
 scripts/run.sh
 ```
 
@@ -94,7 +95,6 @@ Symphony → propagated everywhere.
 - **GitHub** account + `gh` CLI authenticated (`gh auth login`).
 - **Claude Code** CLI on `$PATH` and the Linear MCP installed
   (`claude mcp add --transport sse --scope user linear https://mcp.linear.app/sse`).
-- **Symphony** Python package installed (`pip install -e /path/to/symphony`).
-- **Python 3.9+** (for the promatch repo and seed scripts).
+- **Python 3.9+** (Symphony itself is bundled — `bootstrap.sh` installs it).
 
 That's it. promatch itself uses only SQLite — no other API keys.
