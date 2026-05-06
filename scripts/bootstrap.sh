@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
-# One-shot first-time setup. Idempotent — safe to re-run.
+# One-shot first-time setup (offline-demo). Idempotent — safe to re-run.
 #
 # Reads everything from config.env. Walks you through:
-#   1. Validate config.env is filled in.
-#   2. Initialize promatch as a git repo (if not already).
-#   3. Optionally create the GitHub remote via `gh repo create`.
-#   4. Optionally seed the Linear project with demo issues.
+#   1. Validate config.env is present.
+#   2. Install the bundled Symphony orchestrator into a local venv.
+#   3. Materialize the promatch runtime repo from promatch.template/.
+#   4. Initialize promatch as a local git repo on `main` (no remote).
+#   5. Seed the local tasks.json with the demo issues.
 #
 # Usage:
 #   scripts/bootstrap.sh                 # interactive
@@ -17,7 +18,7 @@ cd "$(dirname "$0")/.."
 if [ ! -f config.env ]; then
   echo "config.env not found." >&2
   echo "  cp config.env.example config.env" >&2
-  echo "  then fill in the four ALL-CAPS values, then re-run this script." >&2
+  echo "  then re-run this script. (No fields require editing for the default layout.)" >&2
   exit 1
 fi
 # shellcheck disable=SC1091
@@ -46,15 +47,25 @@ ask() {
 # ── Step 1: validate config.env ───────────────────────────────────────────────
 echo "==> Validating config.env..."
 err=0
-for var in LINEAR_API_KEY LINEAR_PROJECT_SLUG LINEAR_TEAM_KEY TARGET_REPO; do
+for var in TARGET_REPO SYMPHONY_DIR; do
   val="${!var:-}"
-  if [ -z "$val" ] || [[ "$val" == *REPLACE_ME* ]]; then
-    echo "  ✗ $var is not set (still '$val')."
+  if [ -z "$val" ]; then
+    echo "  ✗ $var is not set."
     err=1
   else
-    echo "  ✓ $var"
+    echo "  ✓ $var=$val"
   fi
 done
+# SYMPHONY_TASKS_FILE is optional — defaults to ./tasks.json next to this
+# script. Export the resolved value so child processes (seed-local.py,
+# symphony, the agent's `tasks` CLI) all agree on the same path.
+if [ -z "${SYMPHONY_TASKS_FILE:-}" ]; then
+  SYMPHONY_TASKS_FILE="$SYMPHONY_DIR/tasks.json"
+  echo "  ✓ SYMPHONY_TASKS_FILE=$SYMPHONY_TASKS_FILE  (default)"
+else
+  echo "  ✓ SYMPHONY_TASKS_FILE=$SYMPHONY_TASKS_FILE"
+fi
+export SYMPHONY_TASKS_FILE
 [ "$err" = "1" ] && exit 1
 
 # ── Set up a local venv so the system Python stays untouched ────────────────
@@ -74,13 +85,14 @@ echo "  ✓ activated ($(python -V 2>&1))"
 echo "==> Upgrading pip inside the venv..."
 python -m pip install --quiet --upgrade pip 2>&1 | tail -2
 
-echo "==> Installing the bundled Symphony orchestrator..."
+echo "==> Installing the bundled Symphony orchestrator (and \`tasks\` CLI)..."
 python -m pip install --quiet -e . 2>&1 | tail -3
 if ! command -v symphony >/dev/null 2>&1; then
   echo "  ✗ symphony still not on PATH after install." >&2
   exit 1
 fi
 echo "  ✓ symphony installed at $(command -v symphony)"
+echo "  ✓ tasks    installed at $(command -v tasks)"
 
 # ── Step 2: materialize the promatch runtime repo from the template ─────────
 echo
@@ -109,7 +121,7 @@ if [ ! -d .git ]; then
   git add -A
   git -c user.name="Symphony Bootstrap" -c user.email="symphony@local" \
     commit -q -m "Initial promatch scaffold"
-  echo "  ✓ initialized git repo on 'main'"
+  echo "  ✓ initialized git repo on 'main' (no remote — offline demo)"
 else
   echo "  ✓ git repo already exists"
 fi
@@ -120,42 +132,23 @@ cd - >/dev/null
 echo "==> Installing promatch (so you can run \`promatch …\` from this shell)..."
 python -m pip install --quiet -e "$TARGET_REPO" 2>&1 | tail -3
 echo "  ✓ promatch installed at $(command -v promatch)"
-cd "$TARGET_REPO"
 
-# ── Step 3: GitHub remote ────────────────────────────────────────────────────
-if git remote get-url origin >/dev/null 2>&1; then
-  echo "  ✓ origin remote: $(git remote get-url origin)"
-else
-  echo
-  echo "==> No GitHub origin remote yet."
-  if command -v gh >/dev/null 2>&1; then
-    if ask "  Create a private GitHub repo via gh now?" n; then
-      default_name="$(basename "$TARGET_REPO")"
-      read -rp "    repo name (default: $default_name): " repo_name
-      repo_name="${repo_name:-$default_name}"
-      gh repo create "$repo_name" --private --source=. --remote=origin --push
-      echo "  ✓ created + pushed to GitHub"
-    else
-      echo "  ⚠ skipped. Add a remote later with:  gh repo create … --source=. --push"
-    fi
-  else
-    echo "  ⚠ gh CLI not found. Install it (brew install gh) and re-run, or"
-    echo "    create the remote manually:  git remote add origin <url> && git push -u origin main"
-  fi
-fi
-
-cd - >/dev/null
-
-# ── Step 4: Linear seed ──────────────────────────────────────────────────────
+# ── Step 3: seed the local task store ────────────────────────────────────────
 echo
-if ask "==> Seed Linear with the dashboard-buildout demo issues?" y; then
-  if ! command -v python3 >/dev/null 2>&1; then
-    echo "  ⚠ python3 not found, skipping seed." ; exit 0
+if [ -f "$SYMPHONY_TASKS_FILE" ] && [ -s "$SYMPHONY_TASKS_FILE" ]; then
+  echo "==> $SYMPHONY_TASKS_FILE already exists."
+  if ask "  Re-seed it with the demo issues (overwrites comments + PRs)?" n; then
+    python3 scripts/seed-local.py --force
+  else
+    echo "  ✓ keeping existing tasks.json"
   fi
-  python3 scripts/seed-linear.py
+else
+  echo "==> Seeding $SYMPHONY_TASKS_FILE with the dashboard-buildout demo issues..."
+  python3 scripts/seed-local.py
 fi
 
 echo
 echo "Done. Next:"
-echo "  1. Move issues to 'Todo' in Linear (the seed script leaves them there)."
+echo "  1. (optional) Edit $SYMPHONY_TASKS_FILE if you want to start with a"
+echo "     subset of issues in 'Todo'."
 echo "  2. scripts/run.sh"

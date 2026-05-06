@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Run Symphony in foreground with demo-friendly log output.
+# Run Symphony in foreground with demo-friendly log output (offline-demo).
 #
 # Sources config.env (the ONE config file) before launch so:
-#   - LINEAR_API_KEY / LINEAR_PROJECT_SLUG are resolvable in WORKFLOW.md
+#   - SYMPHONY_TASKS_FILE is resolvable in WORKFLOW.md
 #   - TARGET_REPO / SYMPHONY_DIR are inherited by hook subprocesses
 #
 # Output behavior:
@@ -56,10 +56,20 @@ if ! command -v symphony >/dev/null 2>&1; then
   exit 1
 fi
 
+# Default SYMPHONY_TASKS_FILE if config.env didn't set it.
+: "${SYMPHONY_TASKS_FILE:=$SYMPHONY_DIR/tasks.json}"
+export SYMPHONY_TASKS_FILE
+
+if [ ! -f "$SYMPHONY_TASKS_FILE" ]; then
+  echo "tasks file missing at $SYMPHONY_TASKS_FILE." >&2
+  echo "Run scripts/bootstrap.sh (or python3 scripts/seed-local.py) first." >&2
+  exit 1
+fi
+
 log_file="symphony.log"
 echo "==> Logs stream live to this terminal AND tail to $log_file."
-echo "==> Tip: in a second pane, run \`scripts/watch-agents.sh\` to see what"
-echo "    each Claude agent is doing right now (live tool-call activity)."
+echo "==> Tip: in a second pane, run \`tasks list\` to see issue states,"
+echo "    or \`scripts/watch-agents.sh\` to see what each Claude agent is doing."
 echo "==> Press Ctrl-C to shut down."
 echo
 

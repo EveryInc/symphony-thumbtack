@@ -23,6 +23,7 @@ dev = [
 
 [project.scripts]
 symphony = "symphony.cli:main"
+tasks = "symphony.tasks_cli:main"
 
 [tool.setuptools.packages.find]
 where = ["."]

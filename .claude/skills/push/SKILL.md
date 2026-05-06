@@ -1,71 +1,104 @@
 ---
 name: push
 description:
-  Push the current branch to origin and create or update the corresponding PR.
-  Use after committing on the issue branch.
+  Finalize the local feature branch and create or update a local PR record on
+  the issue. Use after committing on the issue branch. (offline-demo: there is
+  no remote to push to and no `gh` CLI; "push" here means "package the work
+  for human review locally".)
 ---
 
-# Push
+# Push (offline-demo)
+
+There is no `origin` remote in this demo. "Push" means: make sure the branch
+is in a clean reviewable state and record a local PR entry on the issue via
+the `tasks` CLI so the human reviewer can drag the issue to `Merging` when
+ready.
 
 ## Prerequisites
 
-- `gh auth status` succeeds.
-- Repo has an `origin` remote on GitHub.
+- Working tree is clean (everything committed via the `commit` skill).
+- You know the issue identifier (it's in the prompt as `{{ issue.identifier }}`
+  for the agent that invoked you, but you can also re-read it from the
+  workpad).
+- The branch you're on is `symphony/<identifier>` — that's what the
+  `after_create` hook set up.
 
 ## Steps
 
 1. Identify branch: `branch=$(git branch --show-current)`.
-2. Push with upstream tracking if not yet set:
+2. Verify the working tree is clean and committed:
    ```sh
-   git push -u origin HEAD
+   git status --porcelain
    ```
-3. If push is rejected for non-fast-forward / sync reasons, run the `pull`
-   skill to merge `origin/main` and resolve conflicts, then push again.
-4. Use `--force-with-lease` only when local history was rewritten. Never `--force`.
-5. If the rejection is auth/permissions/workflow restriction — surface the
-   exact error. Do not rewrite remotes or switch protocols as a workaround.
-6. Ensure a PR exists for the branch:
-   - `gh pr view --json state -q .state` (returns nothing if no PR)
-   - If state is `OPEN`, update that PR with `gh pr edit`.
-   - If state is `MERGED`, `CLOSED`, or empty, create a new PR with
-     `gh pr create`. GitHub allows multiple PRs over the lifetime of the
-     same branch name as long as no two are open simultaneously; closed PRs
-     remain as historical record, which is expected.
-7. Write a clear PR title that describes the **outcome** of the change.
-8. Fill the PR body. If `.github/pull_request_template.md` exists, follow it
-   exactly. Otherwise:
+   If anything is unstaged, commit it first via the `commit` skill.
+3. Resolve the issue identifier. If your branch is named `symphony/eng-3`,
+   the identifier is the suffix uppercased: `ENG-3`. If you're unsure, check
+   the workpad header you stamped earlier.
+4. Build the PR body. If the workpad has a clean summary, reuse it; otherwise
+   write a concise outcome-focused note covering:
    - **What** — short summary of the change
-   - **Why** — link to the Linear issue
+   - **Why** — link back to the issue (`tasks://{{ issue.identifier }}`)
    - **How** — implementation notes
    - **Validation** — how you verified it works
-9. Apply the `symphony` label so this PR is identifiable as agent-authored:
+
+   Write it to a file:
    ```sh
-   gh pr edit --add-label symphony 2>/dev/null || true
+   cat > /tmp/pr_body.md <<'EOF'
+   ## What
+   ...
+
+   ## Why
+   tasks://IDENT — see issue body.
+
+   ## How
+   ...
+
+   ## Validation
+   ...
+   EOF
    ```
-10. Report the PR URL: `gh pr view --json url -q .url`.
+5. Check whether a local PR already exists for this issue:
+   ```sh
+   tasks pr-view IDENT --json
+   ```
+   - If output is `null` or `(no PR)` — create one:
+     ```sh
+     tasks pr-create IDENT \
+       --branch "$branch" \
+       --title "<clear PR title>" \
+       --body-file /tmp/pr_body.md \
+       --label symphony
+     ```
+   - If state is `OPEN` — update it in place:
+     ```sh
+     tasks pr-update IDENT \
+       --title "<clear PR title>" \
+       --body-file /tmp/pr_body.md \
+       --label symphony
+     ```
+   - If state is `MERGED` or `CLOSED` — that PR is final. Create a fresh one
+     (the `tasks` CLI will refuse to create over an OPEN PR but accepts a new
+     one over a closed/merged one):
+     ```sh
+     tasks pr-create IDENT \
+       --branch "$branch" \
+       --title "<clear PR title>" \
+       --body-file /tmp/pr_body.md \
+       --label symphony
+     ```
+6. Confirm the local PR is recorded:
+   ```sh
+   tasks pr-view IDENT
+   ```
+   Capture the PR number — it's `pr.number` in the JSON output.
+7. The branch lives only on this machine. Do NOT call `git push` and do NOT
+   call `gh` — neither will work. The branch is the artifact; the local PR
+   record points at it.
 
-## Commands
+## Guardrails
 
-```sh
-branch=$(git branch --show-current)
-
-# Initial push
-git push -u origin HEAD
-
-# If rejected for sync reasons, use the `pull` skill, then re-push.
-# Only use force-with-lease after local history rewrite:
-# git push --force-with-lease origin HEAD
-
-# Check PR state. We only treat OPEN as "edit"; MERGED/CLOSED/empty all
-# mean "create a fresh PR for the current branch".
-pr_state=$(gh pr view --json state -q .state 2>/dev/null || true)
-
-if [ "$pr_state" = "OPEN" ]; then
-  gh pr edit --title "<clear PR title>" --body-file /tmp/pr_body.md
-else
-  gh pr create --title "<clear PR title>" --body-file /tmp/pr_body.md
-fi
-
-gh pr edit --add-label symphony 2>/dev/null || true
-gh pr view --json url -q .url
-```
+- Never call `git push`, `gh pr ...`, or any remote-touching command. There
+  is no remote.
+- Never `--force` anything; there's nothing to force against.
+- Never paste the local PR record into the workpad — the issue's `pr` field
+  is the canonical view, accessible via `tasks pr-view IDENT`.

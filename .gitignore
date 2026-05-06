@@ -11,6 +11,11 @@ _workspaces/
 # every recipient on `git clone`.
 /promatch/
 
+# Local task store (offline-demo). Bootstrap re-creates it from
+# scripts/seed-local.py — the committed source of truth is the seed script.
+/tasks.json
+/tasks.json.lock
+
 # Logs
 symphony.log
 *.log

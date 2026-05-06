@@ -1,23 +1,33 @@
 #!/usr/bin/env python3
-"""Seed the configured Linear project with the promatch demo issues.
+"""Seed the local tasks.json with the promatch demo issues.
 
-Reads LINEAR_API_KEY, LINEAR_PROJECT_SLUG, LINEAR_TEAM_KEY from the environment
-(loaded from config.env via bootstrap.sh, or sourced manually). Idempotent:
-issues are matched by title before creation, so re-running won't duplicate.
+Mirrors the structure of seed-linear.py from the online demo (same titles,
+same descriptions, same blocked_by relationships, same Stage-1 / Stage-2
+split) so the demo content is byte-identical between the two variants.
+
+Reads SYMPHONY_TASKS_FILE from the environment (loaded from config.env via
+bootstrap.sh, or sourced manually). Idempotent:
+
+  - First run on an empty/missing file: creates the project and all issues.
+  - Subsequent runs: adds any issues that don't already exist (matched by
+    title), skips the rest. Existing comments and PRs are preserved.
+  - With --force: REPLACES the file. Comments + PR records are wiped.
 
 Stdlib only — no pip install needed.
 """
 
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import sys
 import textwrap
-import urllib.error
-import urllib.request
+from datetime import datetime, timezone
+from pathlib import Path
 
-API = "https://api.linear.app/graphql"
+DEFAULT_TEAM = "ENG"
+PROJECT_NAME = "Promatch Demo"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -260,8 +270,8 @@ ISSUES = [
 
             ## Validation
 
-            Read the rendered README on GitHub. Fresh eyes should be able to
-            spin up the dashboard from the README alone.
+            Read the local README. Fresh eyes should be able to spin up the
+            dashboard from the README alone.
         """),
     },
 
@@ -408,269 +418,106 @@ ISSUES = [
 ]
 
 
-# ─────────────────────────────────────────────────────────────────────────────
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S+00:00")
 
 
-def gql(api_key: str, query: str, variables: dict | None = None) -> dict:
-    body = json.dumps({"query": query, "variables": variables or {}}).encode("utf-8")
-    req = urllib.request.Request(
-        API,
-        data=body,
-        headers={"Authorization": api_key, "Content-Type": "application/json"},
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            payload = json.loads(resp.read())
-    except urllib.error.HTTPError as e:
-        sys.exit(f"Linear API HTTP {e.code}: {e.read().decode()}")
-    if "errors" in payload:
-        sys.exit(f"Linear API errors: {json.dumps(payload['errors'], indent=2)}")
-    return payload["data"]
+def _slug_branch(identifier: str) -> str:
+    return f"symphony/{identifier.lower().replace('-', '-')}"
 
 
-def find_team(api_key: str, key: str) -> dict:
-    data = gql(
-        api_key,
-        "query($k: String!) { teams(filter: {key: {eq: $k}}) { nodes { id key name } } }",
-        {"k": key},
-    )
-    nodes = data["teams"]["nodes"]
-    if not nodes:
-        sys.exit(f"No team with key {key!r} — check LINEAR_TEAM_KEY in config.env")
-    return nodes[0]
-
-
-def find_project(api_key: str, slug: str) -> dict:
-    """Look up a project by its slug (the random suffix in the URL)."""
-    # Linear lets us filter by slugId (the URL slug).
-    data = gql(
-        api_key,
-        """
-        query($s: String!) {
-          projects(filter: { slugId: { eq: $s } }) {
-            nodes { id name slugId }
-          }
-        }
-        """,
-        {"s": slug},
-    )
-    nodes = data["projects"]["nodes"]
-    if nodes:
-        return nodes[0]
-
-    # Fall back to substring match (helps if the user pasted the full URL tail).
-    data = gql(
-        api_key,
-        """
-        query($s: String!) {
-          projects(filter: { slugId: { contains: $s } }) {
-            nodes { id name slugId }
-          }
-        }
-        """,
-        {"s": slug.split("-")[-1]},
-    )
-    nodes = data["projects"]["nodes"]
-    if not nodes:
-        sys.exit(
-            f"No Linear project matching slug {slug!r}. "
-            "Open the project in your browser and copy the trailing slug from the URL."
-        )
-    if len(nodes) > 1:
-        sys.exit(
-            "Multiple projects matched. Use the full slugId from the project URL "
-            "in LINEAR_PROJECT_SLUG."
-        )
-    return nodes[0]
-
-
-def find_state(api_key: str, team_id: str, name: str) -> dict | None:
-    data = gql(
-        api_key,
-        """
-        query($t: ID!) {
-          workflowStates(filter: { team: { id: { eq: $t } } }) {
-            nodes { id name type }
-          }
-        }
-        """,
-        {"t": team_id},
-    )
-    for s in data["workflowStates"]["nodes"]:
-        if s["name"].lower() == name.lower():
-            return s
-    return None
-
-
-def list_existing_issues(api_key: str, project_id: str) -> dict[str, dict]:
-    """title -> {id, identifier} for all issues currently in the project."""
-    data = gql(
-        api_key,
-        """
-        query($p: ID!) {
-          issues(filter: { project: { id: { eq: $p } } }, first: 100) {
-            nodes { id identifier title }
-          }
-        }
-        """,
-        {"p": project_id},
-    )
-    return {n["title"]: {"id": n["id"], "identifier": n["identifier"]}
-            for n in data["issues"]["nodes"]}
-
-
-def list_existing_relations(api_key: str, project_id: str) -> set[tuple[str, str]]:
-    """Return set of (blocker_id, blocked_id) for every existing 'blocks'
-    relation among this project's issues. Used to make relation seeding idempotent."""
-    data = gql(
-        api_key,
-        """
-        query($p: ID!) {
-          issues(filter: { project: { id: { eq: $p } } }, first: 100) {
-            nodes {
-              id
-              relations { nodes { type relatedIssue { id } } }
-            }
-          }
-        }
-        """,
-        {"p": project_id},
-    )
-    pairs: set[tuple[str, str]] = set()
-    for issue in data["issues"]["nodes"]:
-        blocker_id = issue["id"]
-        for rel in (issue.get("relations") or {}).get("nodes") or []:
-            if (rel.get("type") or "").lower() != "blocks":
-                continue
-            related = rel.get("relatedIssue") or {}
-            blocked_id = related.get("id")
-            if blocked_id:
-                pairs.add((blocker_id, blocked_id))
-    return pairs
-
-
-def create_relation(api_key: str, blocker_id: str, blocked_id: str) -> None:
-    """Create a 'blocks' relation: blocker_id blocks blocked_id."""
-    gql(
-        api_key,
-        """
-        mutation($input: IssueRelationCreateInput!) {
-          issueRelationCreate(input: $input) {
-            success
-            issueRelation { id type }
-          }
-        }
-        """,
-        {"input": {"type": "blocks", "issueId": blocker_id, "relatedIssueId": blocked_id}},
-    )
-
-
-def create_issue(api_key: str, team_id: str, project_id: str, state_id: str | None,
-                 title: str, body: str) -> dict:
-    payload = {
-        "title": title,
-        "description": body,
-        "teamId": team_id,
-        "projectId": project_id,
+def build_doc(team: str) -> dict:
+    """Convert ISSUES into the on-disk schema."""
+    issues_out = []
+    for n, spec in enumerate(ISSUES, start=1):
+        ident = f"{team}-{n}"
+        state = spec.get("state", "Todo")
+        # Resolve blocked_by titles → identifiers using the order above.
+        blocker_idents = []
+        for blocker_title in spec.get("blocked_by") or []:
+            for m, other in enumerate(ISSUES, start=1):
+                if other["title"] == blocker_title:
+                    blocker_idents.append(f"{team}-{m}")
+                    break
+            else:
+                # silently skip unknown reference; matches seed-linear.py's
+                # warn-then-continue behavior.
+                pass
+        issues_out.append({
+            "id": ident,
+            "identifier": ident,
+            "title": spec["title"],
+            "description": spec["body"],
+            "state": state,
+            "priority": None,
+            "branch_name": _slug_branch(ident),
+            "url": f"tasks://{ident}",
+            "labels": [],
+            "blocked_by": blocker_idents,
+            "created_at": _now_iso(),
+            "updated_at": _now_iso(),
+            "comments": [],
+            "pr": None,
+        })
+    return {
+        "version": 1,
+        "team": team,
+        "project": PROJECT_NAME,
+        "next_comment_id": 1,
+        "next_pr_number": 1,
+        "issues": issues_out,
     }
-    if state_id:
-        payload["stateId"] = state_id
-    data = gql(
-        api_key,
-        """
-        mutation($input: IssueCreateInput!) {
-          issueCreate(input: $input) {
-            success
-            issue { id identifier title url state { name } }
-          }
-        }
-        """,
-        {"input": payload},
-    )
-    if not data["issueCreate"]["success"]:
-        sys.exit(f"Failed to create issue: {title}")
-    return data["issueCreate"]["issue"]
 
 
 def main() -> None:
-    api_key = os.environ.get("LINEAR_API_KEY", "")
-    project_slug = os.environ.get("LINEAR_PROJECT_SLUG", "")
-    team_key = os.environ.get("LINEAR_TEAM_KEY", "")
+    p = argparse.ArgumentParser(description="Seed local tasks.json with demo issues.")
+    p.add_argument("--file", default=os.environ.get("SYMPHONY_TASKS_FILE"),
+                   help="Path to tasks.json (default: $SYMPHONY_TASKS_FILE)")
+    p.add_argument("--team", default=os.environ.get("SYMPHONY_TEAM_KEY", DEFAULT_TEAM),
+                   help=f"Team key prefix for issue ids (default: {DEFAULT_TEAM})")
+    p.add_argument("--force", action="store_true",
+                   help="Overwrite an existing file (wipes existing comments and PRs)")
+    args = p.parse_args()
 
-    missing = [n for n, v in [
-        ("LINEAR_API_KEY", api_key),
-        ("LINEAR_PROJECT_SLUG", project_slug),
-        ("LINEAR_TEAM_KEY", team_key),
-    ] if not v or "REPLACE_ME" in v]
-    if missing:
-        sys.exit(f"Missing env vars: {', '.join(missing)}. Source config.env first.")
+    if not args.file:
+        sys.exit("seed-local: no path resolved. Pass --file or set SYMPHONY_TASKS_FILE.")
+    target = Path(args.file).expanduser().resolve()
 
-    print(f"Looking up team {team_key!r}...")
-    team = find_team(api_key, team_key)
-    print(f"  → {team['name']} ({team['id']})")
-
-    print(f"Looking up project (slug {project_slug!r})...")
-    project = find_project(api_key, project_slug)
-    print(f"  → {project['name']} ({project['id']})")
-
-    print("Looking up workflow states (Todo, Backlog)...")
-    states_by_name: dict[str, dict] = {}
-    for name in ("Todo", "Backlog"):
-        s = find_state(api_key, team["id"], name)
-        if s is not None:
-            states_by_name[name] = s
-            print(f"  → {name}: {s['id']}")
-        else:
-            print(f"  ⚠ no {name!r} state on this team — issues for it will land in the team default")
-
-    issues_by_title = list_existing_issues(api_key, project["id"])
-    print(f"\nFound {len(issues_by_title)} existing issue(s) in project. Will skip duplicates.\n")
-
-    created, skipped = 0, 0
-    for spec in ISSUES:
-        if spec["title"] in issues_by_title:
-            print(f"  ⏭  skip (exists): {spec['title']}")
-            skipped += 1
-            continue
-        target_state_name = spec.get("state", "Todo")
-        target_state = states_by_name.get(target_state_name)
-        issue = create_issue(
-            api_key, team["id"], project["id"],
-            target_state["id"] if target_state else None,
-            spec["title"], spec["body"],
-        )
-        print(f"  ✓ created {issue['identifier']} [{target_state_name}]: {issue['title']}")
-        print(f"     {issue['url']}")
-        issues_by_title[spec["title"]] = {"id": issue["id"], "identifier": issue["identifier"]}
-        created += 1
-
-    # ── Wire up blocked_by relations (idempotent) ────────────────────────────
-    print("\nLinking blocked_by relations...")
-    existing_relations = list_existing_relations(api_key, project["id"])
-    rel_created, rel_skipped = 0, 0
-    for spec in ISSUES:
-        blocked_title = spec["title"]
-        for blocker_title in spec.get("blocked_by") or []:
-            blocker = issues_by_title.get(blocker_title)
-            blocked = issues_by_title.get(blocked_title)
-            if not blocker or not blocked:
-                print(f"  ⚠ missing issue for relation {blocker_title!r} -> {blocked_title!r}, skipping")
+    if target.exists() and target.stat().st_size > 0 and not args.force:
+        print(f"==> {target} already exists; merging in any new issues by title.")
+        existing = json.loads(target.read_text())
+        existing.setdefault("issues", [])
+        existing.setdefault("version", 1)
+        existing.setdefault("team", args.team)
+        existing.setdefault("project", PROJECT_NAME)
+        existing.setdefault("next_comment_id", 1)
+        existing.setdefault("next_pr_number", 1)
+        by_title = {i["title"]: i for i in existing["issues"]}
+        new_doc = build_doc(args.team)
+        added = 0
+        for issue in new_doc["issues"]:
+            if issue["title"] in by_title:
                 continue
-            pair = (blocker["id"], blocked["id"])
-            if pair in existing_relations:
-                rel_skipped += 1
-                continue
-            create_relation(api_key, blocker["id"], blocked["id"])
-            print(f"  ✓ {blocker['identifier']} blocks {blocked['identifier']}")
-            existing_relations.add(pair)
-            rel_created += 1
+            existing["issues"].append(issue)
+            added += 1
+            print(f"  ✓ added {issue['identifier']} [{issue['state']}]: {issue['title']}")
+        target.write_text(json.dumps(existing, indent=2) + "\n")
+        print(f"\nDone. {added} new issue(s) added; {len(by_title)} kept as-is.")
+    else:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        doc = build_doc(args.team)
+        target.write_text(json.dumps(doc, indent=2) + "\n")
+        for issue in doc["issues"]:
+            print(f"  ✓ created {issue['identifier']} [{issue['state']}]: {issue['title']}")
+        print(f"\nDone. Wrote {len(doc['issues'])} issue(s) to {target}.")
 
-    print(f"\nDone. Issues: {created} created, {skipped} already existed.")
-    print(f"Relations: {rel_created} created, {rel_skipped} already existed.")
     print()
     print("Stage 1 (Todo): Symphony picks up unblocked issues on its next tick.")
     print("Stage 2 (Backlog): drag these to Todo when stage 1 is Done — they're")
     print("the second act of the demo (pro view, SSE, OpenAPI, agent-book, etc).")
+    print()
+    print(f"  tasks list                    # see issue states")
+    print(f"  tasks update-state ENG-9 --state Todo   # promote a Backlog issue")
 
 
 if __name__ == "__main__":

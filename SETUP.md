@@ -1,8 +1,12 @@
-# Setup
+# Setup (offline-demo)
 
-End-to-end first-time setup for the Symphony × Thumbtack demo. Roughly 15
-minutes from a fresh machine to a running orchestration. Once done, the
-per-demo loop is just `scripts/reset-demo.sh && scripts/run.sh`.
+End-to-end first-time setup for the Symphony × Thumbtack demo, **offline
+variant**. No Linear, no GitHub, no `gh` CLI, no MCP. Roughly 2 minutes from
+a fresh machine to a running orchestration. Once done, the per-demo loop is
+just `scripts/reset-demo.sh && scripts/run.sh`.
+
+This is the backup variant of the demo, intended for use when the live
+networked variant (Linear + GitHub) can't reach those services.
 
 ---
 
@@ -13,166 +17,49 @@ Confirm you have these on your `$PATH`. Install anything missing.
 ```sh
 python3 --version          # 3.9+
 git --version
-gh --version               # brew install gh
 claude --version           # https://docs.anthropic.com/claude-code
 ```
 
-Authenticate `gh`:
-
-```sh
-gh auth login              # GitHub.com → HTTPS → login with browser
-gh auth status             # confirm ✓
-```
-
-You normally use Gerrit for git versioning but in this case the demo works best with github.
+Notably **NOT** required: `gh`, a Linear account, a GitHub account, network
+access to either service. Once you've installed the above tools and Claude
+Code, you can run the entire demo on an airplane.
 
 ---
 
 ## 1. Create your config file
 
-Do this first so you have somewhere to paste each value as you collect it.
-
 ```sh
 cp config.env.example config.env
 ```
 
-You'll fill in four values across steps 2 and 3. Leave them as `REPLACE_ME`
-for now and overwrite as you go.
+There is nothing you need to fill in — every value defaults to a path next to
+this folder. Open it if you want to override `TARGET_REPO` or
+`SYMPHONY_TASKS_FILE`, otherwise leave it alone.
 
 ---
 
-## 2. Get a Linear API key
-
-1. Open Linear → click your avatar (top left) → **Settings**.
-2. Go to **Account → Security & access → API**.
-3. Click **Create new API key**, name it "symphony-demo", copy the value
-   (starts with `lin_api_…`).
-4. **Paste it into `config.env`:**
-
-   ```sh
-   LINEAR_API_KEY=lin_api_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-   ```
-
-> The key inherits **your** permissions. Symphony will read/write the project
-> as you. That's fine for a demo.
-
----
-
-## 3. Create the demo Linear project
-
-1. In your Linear workspace, pick the team you want to demo against (or
-   create a fresh one called e.g. "ENG" or "DEMO"). Note the team's **key**
-   (the 2-4 letter prefix on issue IDs, e.g. `ENG-1`).
-
-   **Paste it into `config.env`:**
-
-   ```sh
-   LINEAR_TEAM_KEY=ENG
-   ```
-
-2. **Projects** → **+ New project**.
-3. Name it something obvious — `Promatch Demo` works.
-4. Description (optional but useful): "Symphony orchestrates Claude agents
-   building a live dashboard on top of the promatch CLI."
-5. Once the project exists, open it. Look at the URL:
-
-   ```
-   https://linear.app/your-team/project/promatch-demo-1a2b3c4d5e6f
-                                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^
-                                       this whole tail is the slugId
-   ```
-
-   **Paste it into `config.env`:**
-
-   ```sh
-   LINEAR_PROJECT_SLUG=promatch-demo-1a2b3c4d5e6f
-   ```
-
-6. Leave `TARGET_REPO` as the default unless you've moved the `promatch/`
-   subdir somewhere else.
-
-Save `config.env`.
-
----
-
-## 4. Add the custom Linear workflow states
-
-Symphony's WORKFLOW.md expects a few states beyond Linear's defaults. Add
-the missing ones once per team.
-
-In Linear: **Team Settings → Workflow -> Issue Statuses** for the team that owns your project.
-
-| State | Type | Purpose |
-|---|---|---|
-| `Backlog` | Backlog | Default. Out-of-scope work; not picked up by Symphony. |
-| `Todo` | Unstarted | Default. **Symphony picks these up.** |
-| `In Progress` | Started | Default. The agent is actively working. |
-| `Human Review` | Started | **Add this.** PR validated, waiting on a human. |
-| `Merging` | Started | **Add this.** Approved by human; agent runs `land`. |
-| `Rework` | Started | **Add this.** Reviewer wants changes; full reset. |
-| `Done` | Completed | Default. Terminal. |
-
-Click "+ Add state" under the **Started** group for each missing one. Match
-the names exactly — `WORKFLOW.md` matches by name string.
-
----
-
-## 5. Install the Linear MCP for Claude
-
-Claude Code talks to Linear via MCP. Install it once at user scope so every
-Claude session — including the ones Symphony spawns — picks it up.
-
-```sh
-claude mcp add --transport sse --scope user linear https://mcp.linear.app/sse
-```
-
-The first time Claude runs, a browser window opens for Linear OAuth. Authorize
-it. The token persists in your Claude config.
-
-To prime the OAuth flow now (so the demo doesn't pause on the first dispatch):
-
-```sh
-claude
-# Inside Claude:  ask it "list my Linear teams" — it'll trigger the OAuth window
-# Authorize, then exit Claude.
-```
-
-Verify:
-
-```sh
-claude mcp list | grep linear
-# linear  https://mcp.linear.app/sse  (sse)
-```
-
----
-
-## 6. Bootstrap the demo
-
-Run the all-in-one bootstrap. It:
-
-- Installs the bundled Symphony (`pip install -e .`) if not already
-- Validates `config.env`
-- Inits `promatch/` as a git repo on `main` if needed
-- Offers to create a GitHub remote via `gh repo create`
-- Offers to seed your Linear project with the 7 demo issues
+## 2. Bootstrap the demo
 
 ```sh
 scripts/bootstrap.sh
 ```
 
-When prompted:
+What it does:
 
-- **"Create a private GitHub repo via gh now?"** → say `y`. Pick a repo
-  name (default: `promatch`). It'll create it under your `gh` account and
-  push `main`. The agents will push their feature branches here too.
-- **"Seed Linear with the dashboard-buildout demo issues?"** → say `y`.
-  Seven issues land in the project's `Todo` column.
+1. Validates `config.env`.
+2. Creates a local virtualenv at `.venv/` and installs the bundled Symphony
+   orchestrator (and the `tasks` CLI).
+3. Materializes `promatch/` from the committed `promatch.template/`.
+4. Initializes `promatch/` as a local git repo on `main`. **No remote** —
+   agents push branches here only.
+5. Installs `promatch` editable so `promatch serve` resolves.
+6. Seeds `tasks.json` with the 13 demo issues (8 in `Todo`, 5 in `Backlog`).
 
 If something fails, fix it and re-run — the script is idempotent.
 
 ---
 
-## 7. Run the demo
+## 3. Run the demo
 
 ```sh
 scripts/run.sh
@@ -184,43 +71,49 @@ Within 30 seconds you should see:
 ==> Logs are also being written to symphony.log (full unfiltered copy).
 ==> Press Ctrl-C to shut down.
 
-ts=… msg=tick candidates=7 running=0 ...
+ts=… msg=tick candidates=8 running=0 ...
 ts=… msg=dispatched issue_identifier=ENG-1 ...
 ts=… msg=hook=after_create ...
 ```
 
-Symphony picks up the seven `Todo` issues and dispatches Claude agents
+Symphony picks up the eight `Todo` issues and dispatches Claude agents
 concurrently (capped at 4 at a time per `agent.max_concurrent_agents`).
-Watch your Linear project: each issue moves `Todo → In Progress`, gets a
-`## Workpad` comment, then later moves to `Human Review` once the agent
-opens a PR.
 
-In a second terminal pane, tail the log:
+In a second terminal pane, watch the issue queue:
+
+```sh
+# Status of every issue
+tasks list
+
+# Or a single issue, including its workpad
+tasks get ENG-1
+tasks comment-list ENG-1
+```
+
+You can also tail the orchestrator log:
 
 ```sh
 scripts/tail.sh
 ```
 
-In your browser, keep these tabs open during the demo:
-
-- **Linear project** — live state changes
-- **GitHub PRs** — `https://github.com/<you>/promatch/pulls`
-
 When an agent finishes a ticket and moves it to `Human Review`, you can:
 
-1. Open the PR, review it, click **Approve** in GitHub.
-2. Drag the Linear issue from `Human Review` → `Merging`.
-3. Within 30s, Symphony's next reconcile picks it up. The agent runs the
-   `land` skill: watches CI, addresses any final review comments, squashes,
-   merges. The issue moves to `Done`.
+1. Read the local PR record: `tasks pr-view ENG-3`.
+2. Read the workpad: `tasks comment-list ENG-3`.
+3. Inspect the branch: `git -C promatch log symphony/eng-3 --oneline -20`.
+4. Drag the issue to `Merging`:
+   `tasks update-state ENG-3 --state Merging`.
+5. Within ~10s, Symphony's next reconcile picks it up. The agent runs the
+   `land` skill: squash-merges into local `main`, marks the local PR as
+   `MERGED`, and moves the issue to `Done`.
 
-After all 7 issues complete, the promatch repo has a working web dashboard.
-Run it:
+After all 8 stage-1 issues are `Done`, the promatch repo has a working web
+dashboard. Run it:
 
 ```sh
 cd promatch
-source .venv/bin/activate          # if you created one earlier
-git pull
+source ../.venv/bin/activate
+git checkout main           # the agents' merges all landed here
 promatch serve
 # → http://localhost:5050
 ```
@@ -229,19 +122,20 @@ promatch serve
 
 ## Per-demo reset
 
-To wipe local state between runs without touching Linear or GitHub:
+To wipe local state between runs:
 
 ```sh
-scripts/reset-demo.sh              # default: kills symphony, removes worktrees,
-                                   # symphony/* branches, _workspaces/, *.log
-scripts/reset-demo.sh --db         # also drops the promatch SQLite DB
-scripts/reset-demo.sh --sessions   # also wipes Claude session transcripts
-                                   # from ~/.claude/projects/ for this demo
-scripts/reset-demo.sh --all        # everything above
+scripts/reset-demo.sh                 # default: kills symphony, removes
+                                       # worktrees, symphony/* branches,
+                                       # _workspaces/, *.log, AND resets
+                                       # tasks.json to starting demo state.
+scripts/reset-demo.sh --keep-tasks    # don't reset tasks.json (keeps
+                                       # comments + PR records around).
+scripts/reset-demo.sh --db            # also drops the promatch SQLite DB.
+scripts/reset-demo.sh --sessions      # also wipes Claude session transcripts
+                                       # from ~/.claude/projects/ for this demo.
+scripts/reset-demo.sh --all           # everything.
 ```
-
-Then in Linear, drag the issues you want for the next demo back to `Todo`,
-or close any open PRs from the previous run.
 
 ---
 
@@ -249,26 +143,27 @@ or close any open PRs from the previous run.
 
 **`config.env missing`** — copy `config.env.example` first.
 
-**`tracker.api_key is required`** — your `LINEAR_API_KEY` is empty or has the
-placeholder. Re-source: `source config.env && echo $LINEAR_API_KEY`.
+**`tracker.tasks_file is required for kind=json`** — your
+`SYMPHONY_TASKS_FILE` is empty. The default in `config.env.example` puts it
+next to that file; if you blanked it out, restore it.
 
-**`No team with key 'ENG'`** when running seed-linear — the team key in
-`config.env` doesn't exist in Linear. It's the 2-4 letter prefix on issue
-IDs, not the team name. Check **Team Settings → General**.
+**`tasks: no tasks file resolved`** — your shell hasn't sourced `config.env`.
+Run `source config.env` in the same shell, or invoke `tasks --file
+/path/to/tasks.json …` explicitly. (Symphony itself sources `config.env`
+through `run.sh`.)
 
-**`No Linear project matching slug`** — copy the *full* trailing slug from
-the project URL after `/project/`. It looks like
-`promatch-demo-1a2b3c4d5e6f` (the `-1a2b3c…` suffix is required).
-
-**Agent runs but Linear never updates** — Linear MCP is missing or not
-authorized. Run `claude mcp list`. If it's listed, run `claude` once
-interactively and trigger the OAuth flow.
-
-**`gh repo create` fails with "already exists"** — fine. Add the remote by
-hand: `git -C promatch remote add origin <url> && git -C promatch push -u origin main`.
+**Agent runs but tasks.json never updates** — confirm the agent has the
+`tasks` CLI on its `$PATH`. The bootstrap installs it via the venv; the
+`run.sh` activation propagates `$PATH` into hook subprocesses, which in turn
+propagate it to Claude.
 
 **Issue stays in `Human Review` forever** — that's the design. It's waiting
-for you to drag it to `Merging` (to land) or `Rework` (to redo).
+for you to drag it to `Merging` (to land) or `Rework` (to redo) via
+`tasks update-state ENG-N --state ...`.
 
 **`hook=after_create exited with non-zero`** — usually `TARGET_REPO` doesn't
 exist or isn't a git repo. Re-run `scripts/bootstrap.sh`.
+
+**`fatal: 'main' is not a commit`** in the `after_create` hook — the
+`promatch/` repo wasn't initialized. Re-run `scripts/bootstrap.sh` and watch
+for "✓ initialized git repo on 'main'" in the output.

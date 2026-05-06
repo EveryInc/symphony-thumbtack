@@ -1,4 +1,4 @@
-"""Issue tracker integration (Section 11). Linear adapter."""
+"""Issue tracker integration (Section 11). Linear + local-JSON adapters."""
 
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional, Sequence
 
 import httpx
 
+from . import tasks_store
 from .config import TrackerConfig
 from .domain import BlockerRef, Issue
 from .errors import (
@@ -303,7 +304,94 @@ class LinearTracker(IssueTracker):
         return [_normalize_issue(n) for n in nodes]
 
 
+class JsonTracker(IssueTracker):
+    """Local JSON-file tracker. Mirrors LinearTracker's contract so the
+    orchestrator stays oblivious to the backing store.
+
+    Reads `config.tasks_file` on every fetch — the file is the source of
+    truth, and the agent-facing `tasks` CLI may have written to it between
+    polls. No network I/O.
+    """
+
+    def __init__(self, *, config: TrackerConfig) -> None:
+        if config.kind != "json":
+            raise UnsupportedTrackerKind(f"JsonTracker requires kind=json, got {config.kind!r}")
+        self._config = config
+
+    def update_config(self, config: TrackerConfig) -> None:
+        self._config = config
+
+    async def aclose(self) -> None:
+        return None
+
+    def _load(self) -> Dict[str, Any]:
+        path = self._config.tasks_file
+        if not path:
+            raise UnsupportedTrackerKind("tracker.tasks_file is required for kind=json")
+        return tasks_store.load(path)
+
+    def _to_issue(self, doc: Dict[str, Any], node: Dict[str, Any]) -> Issue:
+        labels = [str(x).lower() for x in (node.get("labels") or []) if isinstance(x, str)]
+        blocked_by: List[BlockerRef] = []
+        for b in tasks_store.resolve_blockers(doc, node):
+            blocked_by.append(
+                BlockerRef(
+                    id=b.get("id"),
+                    identifier=b.get("identifier"),
+                    state=b.get("state"),
+                )
+            )
+        return Issue(
+            id=node.get("id") or node.get("identifier") or "",
+            identifier=node.get("identifier") or "",
+            title=node.get("title") or "",
+            state=node.get("state") or "",
+            description=node.get("description"),
+            priority=node.get("priority") if isinstance(node.get("priority"), int) else None,
+            branch_name=node.get("branch_name"),
+            url=node.get("url"),
+            labels=labels,
+            blocked_by=blocked_by,
+            created_at=_parse_iso(node.get("created_at")),
+            updated_at=_parse_iso(node.get("updated_at")),
+        )
+
+    async def fetch_candidate_issues(self) -> List[Issue]:
+        doc = self._load()
+        active = {s.lower() for s in self._config.active_states}
+        out: List[Issue] = []
+        for node in doc.get("issues") or []:
+            state = (node.get("state") or "").lower()
+            if state in active:
+                out.append(self._to_issue(doc, node))
+        return out
+
+    async def fetch_issues_by_states(self, state_names: Sequence[str]) -> List[Issue]:
+        if not state_names:
+            return []
+        doc = self._load()
+        wanted = {s.lower() for s in state_names}
+        out: List[Issue] = []
+        for node in doc.get("issues") or []:
+            if (node.get("state") or "").lower() in wanted:
+                out.append(self._to_issue(doc, node))
+        return out
+
+    async def fetch_issue_states_by_ids(self, issue_ids: Sequence[str]) -> List[Issue]:
+        if not issue_ids:
+            return []
+        doc = self._load()
+        wanted = {i for i in issue_ids if i}
+        out: List[Issue] = []
+        for node in doc.get("issues") or []:
+            if (node.get("id") or node.get("identifier")) in wanted:
+                out.append(self._to_issue(doc, node))
+        return out
+
+
 def build_tracker(config: TrackerConfig) -> IssueTracker:
     if config.kind == "linear":
         return LinearTracker(config=config)
+    if config.kind == "json":
+        return JsonTracker(config=config)
     raise UnsupportedTrackerKind(f"unsupported tracker kind: {config.kind!r}")
