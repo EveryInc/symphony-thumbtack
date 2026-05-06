@@ -1,12 +1,16 @@
 ---
 name: pull
 description:
-  Pull latest origin/main into the current local branch and resolve merge
-  conflicts (merge-style, not rebase). Use when the branch is stale or the
-  push skill reports a non-fast-forward rejection.
+  Merge local `main` into the current branch and resolve merge conflicts
+  (merge-style, not rebase). Use when the branch is stale or the land skill
+  reports an out-of-date branch. (offline-demo: there is no `origin`; this
+  pulls from the worktree's local `main` ref.)
 ---
 
-# Pull
+# Pull (offline-demo)
+
+There is no remote in this demo. "Pull" here means: bring local `main`
+commits into the current feature branch.
 
 ## Workflow
 
@@ -16,18 +20,21 @@ description:
    git config rerere.enabled true
    git config rerere.autoupdate true
    ```
-3. Confirm `origin` exists and you are on the right branch.
-4. Fetch: `git fetch origin`.
-5. Sync the remote feature branch first (in case CI or auto-fix bots updated it):
+3. Confirm you're on the feature branch (`symphony/<identifier>`), not on
+   `main`:
    ```sh
-   git pull --ff-only origin "$(git branch --show-current)"
+   git branch --show-current
    ```
-6. Merge `origin/main`:
+4. Merge `main` into the current branch:
    ```sh
-   git -c merge.conflictstyle=zdiff3 merge origin/main
+   git -c merge.conflictstyle=zdiff3 merge main
    ```
-7. If conflicts: resolve, `git add <files>`, `git commit` (or `git merge --continue`).
-8. Verify nothing was missed: `git diff --check`.
+5. If conflicts: resolve, `git add <files>`, `git commit`
+   (or `git merge --continue`).
+6. Verify nothing was missed: `git diff --check`.
+
+Note: `git pull` and `git fetch origin` will both fail in this demo because
+there is no `origin`. Use `git merge main` directly.
 
 ## Conflict resolution
 

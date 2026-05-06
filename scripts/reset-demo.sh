@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Reset Symphony's local state to a clean demo starting point.
+# Reset Symphony's local state to a clean demo starting point (offline-demo).
 #
-# Reads TARGET_REPO and SYMPHONY_DIR from config.env so paths live in ONE place.
+# Reads TARGET_REPO, SYMPHONY_DIR, SYMPHONY_TASKS_FILE from config.env so paths
+# live in ONE place.
 #
 # Default behavior (always):
 #   - Stops any running symphony process.
@@ -9,13 +10,14 @@
 #   - Deletes local symphony/* branches in $TARGET_REPO.
 #   - Wipes _workspaces/.
 #   - Removes symphony.log and any *.log in this folder.
+#   - Resets every issue in tasks.json back to its starting state (Todo for
+#     stage 1, Backlog for stage 2), drops all comments and PR records.
 #
 # Optional flags:
-#   --db        Drop and reseed the promatch SQLite DB.
-#   --sessions  Delete Claude Code session transcripts for this workspace.
-#   --all       Equivalent to --db --sessions.
-#
-# Linear and GitHub state are left untouched (do those by hand).
+#   --keep-tasks  Don't reset tasks.json (preserves comments + PR records).
+#   --db          Drop and reseed the promatch SQLite DB.
+#   --sessions    Delete Claude Code session transcripts for this workspace.
+#   --all         Equivalent to --db --sessions (tasks.json is reset by default).
 
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -28,6 +30,8 @@ fi
 source config.env
 : "${TARGET_REPO:?TARGET_REPO not set in config.env}"
 : "${SYMPHONY_DIR:?SYMPHONY_DIR not set in config.env}"
+: "${SYMPHONY_TASKS_FILE:=$SYMPHONY_DIR/tasks.json}"
+export SYMPHONY_TASKS_FILE
 
 # Activate the bootstrap-created venv so `promatch` is on PATH for --db reseed.
 if [ -d "$SYMPHONY_DIR/.venv" ]; then
@@ -37,13 +41,15 @@ fi
 
 reset_db=0
 reset_sessions=0
+keep_tasks=0
 for arg in "$@"; do
   case "$arg" in
-    --db)       reset_db=1 ;;
-    --sessions) reset_sessions=1 ;;
-    --all)      reset_db=1; reset_sessions=1 ;;
+    --db)          reset_db=1 ;;
+    --sessions)    reset_sessions=1 ;;
+    --keep-tasks)  keep_tasks=1 ;;
+    --all)         reset_db=1; reset_sessions=1 ;;
     -h|--help)
-      head -20 "$0" | tail -16
+      head -22 "$0" | tail -18
       exit 0
       ;;
   esac
@@ -87,6 +93,13 @@ mkdir -p "$WORKSPACES"
 echo "==> Removing logs in $SYMPHONY_DIR..."
 rm -f "$SYMPHONY_DIR"/*.log
 
+if [ "$keep_tasks" = "0" ]; then
+  echo "==> Resetting $SYMPHONY_TASKS_FILE to starting demo state..."
+  python3 scripts/seed-local.py --force
+else
+  echo "==> Keeping $SYMPHONY_TASKS_FILE as-is (--keep-tasks)."
+fi
+
 if [ "$reset_db" = "1" ]; then
   echo "==> Resetting promatch SQLite DB..."
   rm -f "${PROMATCH_DB:-$HOME/.promatch/promatch.db}"
@@ -106,7 +119,6 @@ if [ "$reset_sessions" = "1" ]; then
   # Claude Code stores per-cwd session transcripts under
   # ~/.claude/projects/<flattened-path>/. Symphony spawns Claude with cwd
   # = each per-issue worktree, so every workspace gets its own folder.
-  # Match all session folders that contain this demo's _workspaces path.
   flat_prefix="$(echo "$WORKSPACES" | sed 's|/|-|g')"
   sessions_root="$HOME/.claude/projects"
   if [ -d "$sessions_root" ]; then
@@ -125,7 +137,5 @@ fi
 echo
 echo "==> Done. Local state is clean."
 echo
-echo "Manual steps before starting the demo:"
-echo "  1. In Linear, move issues you want dispatched back to 'Todo'."
-echo "  2. (optional) Close any open PRs from previous runs in GitHub."
-echo "  3. Start Symphony:  scripts/run.sh"
+echo "Next:"
+echo "  scripts/run.sh"

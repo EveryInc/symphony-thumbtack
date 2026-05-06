@@ -20,9 +20,10 @@ from .errors import (
 )
 
 
-SUPPORTED_TRACKER_KINDS = {"linear"}
+SUPPORTED_TRACKER_KINDS = {"linear", "json"}
 LINEAR_DEFAULT_ENDPOINT = "https://api.linear.app/graphql"
 LINEAR_DEFAULT_API_KEY_ENV = "LINEAR_API_KEY"
+JSON_DEFAULT_TASKS_FILE_ENV = "SYMPHONY_TASKS_FILE"
 
 DEFAULT_ACTIVE_STATES = ["Todo", "In Progress"]
 DEFAULT_TERMINAL_STATES = ["Closed", "Cancelled", "Canceled", "Duplicate", "Done"]
@@ -110,6 +111,7 @@ class TrackerConfig:
     project_slug: Optional[str]
     active_states: List[str]
     terminal_states: List[str]
+    tasks_file: Optional[str] = None  # absolute path, only when kind=="json"
 
 
 @dataclass
@@ -267,6 +269,23 @@ def build_service_config(raw: Mapping[str, Any], source_path: str) -> ServiceCon
         default=DEFAULT_TERMINAL_STATES,
     )
 
+    tasks_file: Optional[str] = None
+    if kind == "json":
+        tasks_file_raw = tracker_raw.get("tasks_file")
+        resolved_tasks_file = (
+            _resolve_var(tasks_file_raw) if isinstance(tasks_file_raw, str) else None
+        )
+        if not resolved_tasks_file:
+            resolved_tasks_file = os.environ.get(JSON_DEFAULT_TASKS_FILE_ENV) or None
+        if resolved_tasks_file:
+            expanded = _expand_path(resolved_tasks_file)
+            if expanded and not os.path.isabs(expanded):
+                expanded = os.path.normpath(os.path.join(source_dir, expanded))
+            tasks_file = os.path.abspath(expanded) if expanded else None
+        else:
+            # Default: tasks.json next to WORKFLOW.md.
+            tasks_file = os.path.abspath(os.path.join(source_dir, "tasks.json"))
+
     polling_raw = raw.get("polling") or {}
     if not isinstance(polling_raw, dict):
         raise ConfigValidationError("`polling` must be a map")
@@ -412,6 +431,7 @@ def build_service_config(raw: Mapping[str, Any], source_path: str) -> ServiceCon
             project_slug=project_slug,
             active_states=active_states,
             terminal_states=terminal_states,
+            tasks_file=tasks_file,
         ),
         polling=polling,
         workspace=workspace,
@@ -445,6 +465,11 @@ def validate_dispatch_config(cfg: ServiceConfig) -> Tuple[bool, Optional[Excepti
                 )
             if not cfg.tracker.project_slug:
                 raise MissingTrackerProjectSlug("tracker.project_slug is required")
+        if cfg.tracker.kind == "json":
+            if not cfg.tracker.tasks_file:
+                raise ConfigValidationError(
+                    "tracker.tasks_file is required for kind=json"
+                )
         if cfg.agent.kind == "claude":
             if not cfg.claude.command.strip():
                 raise ConfigValidationError("claude.command must be non-empty")

@@ -33,8 +33,8 @@ for ((i=1; i<=$#; i++)); do
 done
 
 # Flatten the workspaces path the way Claude Code names project folders:
-# `/Users/foo/bar` -> `-Users-foo-bar`.
-FLAT_PREFIX="$(echo "$SYMPHONY_DIR/_workspaces" | sed 's|/|-|g')"
+# `/Users/foo/_bar` -> `-Users-foo--bar`. Both `/` and `_` get replaced with `-`.
+FLAT_PREFIX="$(echo "$SYMPHONY_DIR/_workspaces" | sed -e 's|/|-|g' -e 's|_|-|g')"
 SESSIONS_ROOT="$HOME/.claude/projects"
 
 # Use python (already in the venv) to render each frame — easier than jq+awk
